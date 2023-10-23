@@ -68,12 +68,13 @@ enum JpaQueryFactory {
 	 * @param em must not be {@literal null}.
 	 * @return
 	 */
-	public StoredProcedureJpaQuery fromProcedureAnnotation(JpaQueryMethod method, EntityManager em) {
+	public StoredProcedureQueryContext fromProcedureAnnotation(JpaQueryMethod method, EntityManager em) {
 
 		if (method.isScrollQuery()) {
 			throw QueryCreationException.create(method, "Scroll queries are not supported using stored procedures");
 		}
 
-		return new StoredProcedureJpaQuery(method, em);
+		return new StoredProcedureQueryContext(method, em, null, null);
+//		return new StoredProcedureJpaQuery(method, em);
 	}
 }
