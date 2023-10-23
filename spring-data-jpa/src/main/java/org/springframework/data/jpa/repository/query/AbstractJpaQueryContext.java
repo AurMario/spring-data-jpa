@@ -47,6 +47,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	private final JpaMetamodel metamodel;
 	private final PersistenceProvider provider;
 
+	private final JpaQueryContextExecutor executor;
+
 	protected ParameterBinder parameterBinder;
 
 	public AbstractJpaQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
@@ -57,6 +59,23 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		this.metamodel = metamodel;
 		this.provider = provider;
 		this.parameterBinder = ParameterBinderFactory.createBinder(method.getParameters());
+
+		if (method.isStreamQuery()) {
+			this.executor = new StreamExecutor(this);
+		} else if (method.isProcedureQuery()) {
+			this.executor = new ProcedureExecutor(this);
+		} else if (method.isCollectionQuery()) {
+			this.executor = new CollectionExecutor(this);
+		} else if (method.isSliceQuery()) {
+			this.executor = new SlicedExecutor(this);
+		} else if (method.isPageQuery()) {
+			this.executor = new PagedExecutor(this);
+		} else if (method.isModifyingQuery()) {
+			this.executor = new ModifyingExecutor(this, entityManager);
+		} else {
+			this.executor = new SingleEntityExecutor(this);
+		}
+
 	}
 
 	@Override
@@ -84,6 +103,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		// apply query hints
 		Query parsedQueryWithHints = applyQueryHints(parsedQuery);
 
+		// apply lock mode
 		Query parsedQueryWithHintsAndLockMode = applyLockMode(parsedQueryWithHints);
 
 		// gather parameters and bind them to the query
@@ -91,33 +111,20 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		Query queryToExecute = bind(parsedQueryWithHintsAndLockMode, accessor);
 
 		// execute query
-		JpaQueryContextExecution execution;
-
-		if (method.isStreamQuery()) {
-			execution = new StreamExecution(this);
-		} else if (method.isProcedureQuery()) {
-			execution = new ProcedureExecution(this);
-		} else if (method.isCollectionQuery()) {
-			execution = new CollectionExecution(this);
-		} else if (method.isSliceQuery()) {
-			execution = new SlicedExecution(this);
-		} else if (method.isPageQuery()) {
-			execution = new PagedExecution(this);
-		} else if (method.isModifyingQuery()) {
-			execution = new ModifyingExecution(this, entityManager);
-		} else {
-			execution = new SingleEntityExecution(this);
-		}
-
-		Object result = execution.execute(method, queryToExecute, accessor);
+		Object rawResults = executor.execute(method, queryToExecute, accessor);
 
 		// Unwrap results
-		Object unwrapped = unwrapAndApplyProjections(result, accessor);
+		Object unwrappedResults = unwrapAndApplyProjections(rawResults, accessor);
 
 		// return results
-		return unwrapped;
+		return unwrappedResults;
 	}
 
+	/**
+	 * Every form of query must produce a string-based query.
+	 * 
+	 * @return
+	 */
 	protected abstract String createQuery();
 
 	/**
@@ -187,6 +194,12 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 				new AbstractJpaQuery.TupleConverter(withDynamicProjection.getReturnedType()));
 	}
 
+	/**
+	 * Transform the incoming array of arguments into a {@link JpaParametersParameterAccessor}.
+	 * 
+	 * @param values
+	 * @return
+	 */
 	private JpaParametersParameterAccessor obtainParameterAccessor(Object[] values) {
 
 		if (method.isNativeQuery() && PersistenceProvider.HIBERNATE.equals(provider)) {
@@ -197,9 +210,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	}
 
 	/**
-	 * Base class that defines how queries are executed using JPA.
+	 * Base class that defines how queries are executed with JPA.
 	 */
-	private abstract class JpaQueryContextExecution {
+	private abstract class JpaQueryContextExecutor {
 
 		static final ConversionService CONVERSION_SERVICE;
 
@@ -216,7 +229,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 		protected final AbstractJpaQueryContext queryContext;
 
-		public JpaQueryContextExecution(AbstractJpaQueryContext queryContext) {
+		public JpaQueryContextExecutor(AbstractJpaQueryContext queryContext) {
 			this.queryContext = queryContext;
 		}
 
@@ -258,11 +271,11 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA query for a Java 8 {@link java.util.stream.Stream}-returning repository method.
 	 */
-	private class StreamExecution extends JpaQueryContextExecution {
+	private class StreamExecutor extends JpaQueryContextExecutor {
 
 		private static final String NO_SURROUNDING_TRANSACTION = "You're trying to execute a streaming query method without a surrounding transaction that keeps the connection open so that the Stream can actually be consumed; Make sure the code consuming the stream uses @Transactional or any other way of declaring a (read-only) transaction";
 
-		public StreamExecution(AbstractJpaQueryContext queryContext) {
+		public StreamExecutor(AbstractJpaQueryContext queryContext) {
 			super(queryContext);
 		}
 
@@ -280,11 +293,11 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA stored procedure.
 	 */
-	private class ProcedureExecution extends JpaQueryContextExecution {
+	private class ProcedureExecutor extends JpaQueryContextExecutor {
 
 		private static final String NO_SURROUNDING_TRANSACTION = "You're trying to execute a @Procedure method without a surrounding transaction that keeps the connection open so that the ResultSet can actually be consumed; Make sure the consumer code uses @Transactional or any other way of declaring a (read-only) transaction";
 
-		public ProcedureExecution(AbstractJpaQueryContext context) {
+		public ProcedureExecutor(AbstractJpaQueryContext context) {
 
 			super(context);
 
@@ -328,9 +341,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA query for a Java {@link Collection}-returning repository method.
 	 */
-	private class CollectionExecution extends JpaQueryContextExecution {
+	private class CollectionExecutor extends JpaQueryContextExecutor {
 
-		public CollectionExecution(AbstractJpaQueryContext queryContext) {
+		public CollectionExecutor(AbstractJpaQueryContext queryContext) {
 			super(queryContext);
 		}
 
@@ -343,9 +356,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA query for a Spring Data {@link org.springframework.data.domain.Slice}-returning repository method.
 	 */
-	private class SlicedExecution extends JpaQueryContextExecution {
+	private class SlicedExecutor extends JpaQueryContextExecutor {
 
-		public SlicedExecution(AbstractJpaQueryContext queryContext) {
+		public SlicedExecutor(AbstractJpaQueryContext queryContext) {
 			super(queryContext);
 		}
 
@@ -376,9 +389,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA query for a Spring Data {@link org.springframework.data.domain.Page}-returning repository method.
 	 */
-	private class PagedExecution extends JpaQueryContextExecution {
+	private class PagedExecutor extends JpaQueryContextExecutor {
 
-		public PagedExecution(AbstractJpaQueryContext queryContext) {
+		public PagedExecutor(AbstractJpaQueryContext queryContext) {
 			super(queryContext);
 		}
 
@@ -390,7 +403,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 		private long count(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
 
-			List<?> totals = query.getResultList();
+			List<?> totals = query.getResultList(); // TODO: create a count query based on current query
 			return totals.size() == 1 //
 					? CONVERSION_SERVICE.convert(totals.get(0), Long.class) //
 					: totals.size();
@@ -401,11 +414,11 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	 * Execute a JPA query for a repository with an @{@link org.springframework.data.jpa.repository.Modifying} annotation
 	 * applied.
 	 */
-	private class ModifyingExecution extends JpaQueryContextExecution {
+	private class ModifyingExecutor extends JpaQueryContextExecutor {
 
 		private final EntityManager entityManager;
 
-		public ModifyingExecution(AbstractJpaQueryContext queryContext, EntityManager entityManager) {
+		public ModifyingExecutor(AbstractJpaQueryContext queryContext, EntityManager entityManager) {
 
 			super(queryContext);
 
@@ -442,9 +455,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	/**
 	 * Execute a JPA query for a repository method returning a single value.
 	 */
-	private class SingleEntityExecution extends JpaQueryContextExecution {
+	private class SingleEntityExecutor extends JpaQueryContextExecutor {
 
-		public SingleEntityExecution(AbstractJpaQueryContext queryContext) {
+		public SingleEntityExecutor(AbstractJpaQueryContext queryContext) {
 			super(queryContext);
 		}
 

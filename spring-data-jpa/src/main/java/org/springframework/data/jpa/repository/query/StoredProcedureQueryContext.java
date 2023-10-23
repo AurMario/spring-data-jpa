@@ -57,11 +57,11 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	protected Query bind(Query query, JpaParametersParameterAccessor accessor) {
 
 		Assert.isInstanceOf(StoredProcedureQuery.class, query);
-
 		StoredProcedureQuery storedProcedure = (StoredProcedureQuery) query;
+
 		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata("singleton", storedProcedure);
 
-		return parameterBinder.bind(query, metadata, accessor);
+		return parameterBinder.bind(storedProcedure, metadata, accessor);
 	}
 
 	@Nullable
