@@ -9,16 +9,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.data.jpa.provider.PersistenceProvider;
 import org.springframework.data.jpa.util.JpaMetamodel;
-import org.springframework.data.repository.core.support.SurroundingTransactionDetectorMethodInterceptor;
 import org.springframework.data.repository.query.Parameter;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
-class StoredProcedureQueryContext<T> extends AbstractJpaQueryContext {
+class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
 	private static final String NO_SURROUNDING_TRANSACTION = "You're trying to execute a @Procedure method without a surrounding transaction that keeps the connection open so that the ResultSet can actually be consumed; Make sure the consumer code uses @Transactional or any other way of declaring a (read-only) transaction";
 
@@ -64,35 +62,6 @@ class StoredProcedureQueryContext<T> extends AbstractJpaQueryContext {
 		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata("singleton", storedProcedure);
 
 		return parameterBinder.bind(query, metadata, accessor);
-	}
-
-	@Override
-	protected Object doExecute(JpaQueryMethod method, Query queryToExecute, JpaParametersParameterAccessor accessor) {
-
-		Assert.isInstanceOf(StoredProcedureQuery.class, queryToExecute);
-
-		StoredProcedureQuery procedure = (StoredProcedureQuery) queryToExecute;
-
-		try {
-			boolean returnsResultSet = procedure.execute();
-
-			if (returnsResultSet) {
-
-				if (!SurroundingTransactionDetectorMethodInterceptor.INSTANCE.isSurroundingTransactionActive()) {
-					throw new InvalidDataAccessApiUsageException(NO_SURROUNDING_TRANSACTION);
-				}
-
-				return method.isCollectionQuery() ? procedure.getResultList() : procedure.getSingleResult();
-			}
-
-			return extractOutputValue(procedure); // extract output value from the procedure
-		} finally {
-			if (procedure instanceof AutoCloseable autoCloseable) {
-				try {
-					autoCloseable.close();
-				} catch (Exception ignored) {}
-			}
-		}
 	}
 
 	@Nullable
