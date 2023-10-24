@@ -22,8 +22,6 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
 	private final StoredProcedureAttributes procedureAttributes;
 	private final boolean useNamedParameters;
-	private final QueryParameterSetter.QueryMetadataCache metadataCache = new QueryParameterSetter.QueryMetadataCache();
-
 	public StoredProcedureQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
 			PersistenceProvider provider) {
 
@@ -46,7 +44,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected Query createJpaQuery(String query) {
+	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
 
 		return procedureAttributes.isNamedStoredProcedure() //
 				? newNamedStoredProcedureQuery(query)

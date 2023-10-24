@@ -6,6 +6,7 @@ import jakarta.persistence.NoResultException;
 import jakarta.persistence.Query;
 import jakarta.persistence.QueryHint;
 import jakarta.persistence.StoredProcedureQuery;
+import jakarta.persistence.Tuple;
 
 import java.util.Collection;
 import java.util.List;
@@ -20,8 +21,8 @@ import org.springframework.data.domain.SliceImpl;
 import org.springframework.data.jpa.provider.PersistenceProvider;
 import org.springframework.data.jpa.util.JpaMetamodel;
 import org.springframework.data.repository.core.support.SurroundingTransactionDetectorMethodInterceptor;
-import org.springframework.data.repository.query.QueryMethod;
 import org.springframework.data.repository.query.ResultProcessor;
+import org.springframework.data.repository.query.ReturnedType;
 import org.springframework.data.support.PageableExecutionUtils;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
@@ -49,7 +50,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 	private final JpaQueryContextExecutor executor;
 
-	protected ParameterBinder parameterBinder;
+	protected final QueryParameterSetter.QueryMetadataCache metadataCache = new QueryParameterSetter.QueryMetadataCache();
+
+	protected final ParameterBinder parameterBinder;
 
 	public AbstractJpaQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
 			PersistenceProvider provider) {
@@ -79,8 +82,12 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	}
 
 	@Override
-	public QueryMethod getQueryMethod() {
+	public JpaQueryMethod getQueryMethod() {
 		return this.method;
+	}
+
+	public JpaMetamodel getMetamodel() {
+		return metamodel;
 	}
 
 	public EntityManager getEntityManager() {
@@ -95,10 +102,11 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		String initialQuery = createQuery();
 
 		// post-process query
-		String processedQuery = processQuery(initialQuery);
+		JpaParametersParameterAccessor accessor = obtainParameterAccessor(parameters);
+		String processedQuery = processQuery(initialQuery, accessor);
 
 		// parse query
-		Query parsedQuery = createJpaQuery(processedQuery);
+		Query parsedQuery = createJpaQuery(processedQuery, accessor);
 
 		// apply query hints
 		Query parsedQueryWithHints = applyQueryHints(parsedQuery);
@@ -107,7 +115,6 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		Query parsedQueryWithHintsAndLockMode = applyLockMode(parsedQueryWithHints);
 
 		// gather parameters and bind them to the query
-		JpaParametersParameterAccessor accessor = obtainParameterAccessor(parameters);
 		Query queryToExecute = bind(parsedQueryWithHintsAndLockMode, accessor);
 
 		// execute query
@@ -133,7 +140,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	 * @param query
 	 * @return modified query
 	 */
-	protected String processQuery(String query) {
+	protected String processQuery(String query, JpaParametersParameterAccessor accessor) {
 		return query;
 	}
 
@@ -143,8 +150,20 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	 * @param query
 	 * @return
 	 */
-	protected Query createJpaQuery(String query) {
+	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
 		return entityManager.createQuery(query, method.getReturnType());
+	}
+
+	@Nullable
+	protected Class<?> getTypeToRead(ReturnedType returnedType) {
+
+		if (PersistenceProvider.ECLIPSELINK.equals(provider)) {
+			return null;
+		}
+
+		return returnedType.isProjecting() && !getMetamodel().isJpaManaged(returnedType.getReturnedType()) //
+				? Tuple.class //
+				: null;
 	}
 
 	protected Query applyQueryHints(Query query) {

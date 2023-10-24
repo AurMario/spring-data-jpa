@@ -47,9 +47,9 @@ class ExpressionBasedStringQuery extends StringQuery {
 	private static final Pattern EXPRESSION_PARAMETER_QUOTING = Pattern.compile("([:?])#\\{");
 	private static final Pattern EXPRESSION_PARAMETER_UNQUOTING = Pattern.compile("([:?])__HASH__\\{");
 
-	private static final String ENTITY_NAME = "entityName";
+	static final String ENTITY_NAME = "entityName";
 	private static final String ENTITY_NAME_VARIABLE = "#" + ENTITY_NAME;
-	private static final String ENTITY_NAME_VARIABLE_EXPRESSION = "#{" + ENTITY_NAME_VARIABLE;
+	static final String ENTITY_NAME_VARIABLE_EXPRESSION = "#{" + ENTITY_NAME_VARIABLE;
 
 	/**
 	 * Creates a new {@link ExpressionBasedStringQuery} for the given query and {@link EntityMetadata}.
@@ -110,15 +110,15 @@ class ExpressionBasedStringQuery extends StringQuery {
 		return potentiallyUnquoteParameterExpressions(result);
 	}
 
-	private static String potentiallyUnquoteParameterExpressions(String result) {
+	static String potentiallyUnquoteParameterExpressions(String result) {
 		return EXPRESSION_PARAMETER_UNQUOTING.matcher(result).replaceAll(EXPRESSION_PARAMETER);
 	}
 
-	private static String potentiallyQuoteExpressionsParameter(String query) {
+	static String potentiallyQuoteExpressionsParameter(String query) {
 		return EXPRESSION_PARAMETER_QUOTING.matcher(query).replaceAll(QUOTED_EXPRESSION_PARAMETER);
 	}
 
-	private static boolean containsExpression(String query) {
+	static boolean containsExpression(String query) {
 		return query.contains(ENTITY_NAME_VARIABLE_EXPRESSION);
 	}
 }
