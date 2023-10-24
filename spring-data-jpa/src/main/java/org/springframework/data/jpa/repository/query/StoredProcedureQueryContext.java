@@ -53,6 +53,11 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
+	protected Query createCountQuery(JpaParametersParameterAccessor values) {
+		throw new UnsupportedOperationException("StoredProcedureQuery does not support count queries");
+	}
+
+	@Override
 	protected Query bind(Query query, JpaParametersParameterAccessor accessor) {
 
 		Assert.isInstanceOf(StoredProcedureQuery.class, query);

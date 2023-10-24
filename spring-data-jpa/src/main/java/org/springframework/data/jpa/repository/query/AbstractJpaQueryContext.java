@@ -123,7 +123,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		Query queryToExecute = bind(parsedQueryWithHintsAndLockMode, accessor);
 
 		// execute query
-		Object rawResults = executor.execute(method, queryToExecute, accessor);
+		Object rawResults = executor.execute(this, queryToExecute, accessor);
 
 		// Unwrap results
 		Object unwrappedResults = unwrapAndApplyProjections(rawResults, accessor);
@@ -158,6 +158,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
 		return entityManager.createQuery(query, method.getReturnType());
 	}
+
+	protected abstract Query createCountQuery(JpaParametersParameterAccessor values);
 
 	@Nullable
 	protected Class<?> getTypeToRead(ReturnedType returnedType) {
@@ -258,16 +260,16 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Nullable
-		public Object execute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		public Object execute(AbstractJpaQueryContext queryContext, Query query, JpaParametersParameterAccessor accessor) {
 
-			Assert.notNull(queryMethod, "JpaQueryMethod must not be null");
+			Assert.notNull(queryContext, "QueryContext must not be null");
 			Assert.notNull(query, "Query must not be null");
 			Assert.notNull(accessor, "JpaParametersParameterAccessor must not be null");
 
 			Object result;
 
 			try {
-				result = doExecute(queryMethod, query, accessor);
+				result = doExecute(queryContext, query, accessor);
 			} catch (NoResultException ex) {
 				return null;
 			}
@@ -276,7 +278,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 				return null;
 			}
 
-			Class<?> requiredType = queryMethod.getReturnType();
+			Class<?> requiredType = queryContext.getQueryMethod().getReturnType();
 
 			if (ClassUtils.isAssignable(requiredType, void.class) || ClassUtils.isAssignableValue(requiredType, result)) {
 				return result;
@@ -288,7 +290,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Nullable
-		protected abstract Object doExecute(JpaQueryMethod queryMethod, Query query,
+		protected abstract Object doExecute(AbstractJpaQueryContext queryContext, Query query,
 				JpaParametersParameterAccessor accessor);
 	}
 
@@ -304,7 +306,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 
 			if (!SurroundingTransactionDetectorMethodInterceptor.INSTANCE.isSurroundingTransactionActive()) {
 				throw new InvalidDataAccessApiUsageException(NO_SURROUNDING_TRANSACTION);
@@ -333,7 +336,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 
 			Assert.isInstanceOf(StoredProcedureQuery.class, query);
 
@@ -348,7 +352,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 						throw new InvalidDataAccessApiUsageException(NO_SURROUNDING_TRANSACTION);
 					}
 
-					return queryMethod.isCollectionQuery() ? procedure.getResultList() : procedure.getSingleResult();
+					return queryContext.getQueryMethod().isCollectionQuery() ? procedure.getResultList()
+							: procedure.getSingleResult();
 				}
 
 				return getProcedureContext().extractOutputValue(procedure); // extract output value from the procedure
@@ -372,7 +377,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 			return query.getResultList();
 		}
 	}
@@ -387,7 +393,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 
 			Pageable pageable = accessor.getPageable();
 
@@ -420,22 +427,23 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 
 			List resultList = query.getResultList();
 
-			return PageableExecutionUtils.getPage(resultList, accessor.getPageable(),
-					() -> count(queryMethod, query, accessor));
+			return PageableExecutionUtils.getPage(resultList, accessor.getPageable(), () -> count(queryContext, accessor));
 		}
 
-		private long count(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		private long count(AbstractJpaQueryContext queryContext, JpaParametersParameterAccessor accessor) {
 
-			List<?> totals = query.getResultList(); // TODO: create a count query based on current query
+			List<?> totals = queryContext.createCountQuery(accessor).getResultList();
 
 			return totals.size() == 1 //
 					? CONVERSION_SERVICE.convert(totals.get(0), Long.class) //
 					: totals.size();
 		}
+
 	}
 
 	/**
@@ -456,7 +464,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 
 			Class<?> returnType = method.getReturnType();
 
@@ -490,7 +499,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
+				JpaParametersParameterAccessor accessor) {
 			return query.getSingleResult();
 		}
 	}

@@ -23,14 +23,11 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
 	private final String originalQueryString;
-
 	private final String queryString;
-
 	private final String countQueryString;
 	private final QueryMethodEvaluationContextProvider evaluationContextProvider;
 	private final SpelExpressionParser parser;
 	private final boolean nativeQuery;
-
 	private final List<ParameterBinding> bindings;
 	private final DeclaredQuery declaredQuery;
 
@@ -56,33 +53,6 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		validateQueries();
 	}
 
-	@Override
-	protected ParameterBinder createBinder() {
-		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), declaredQuery, parser,
-				evaluationContextProvider);
-	}
-
-	private void validateQueries() {
-
-		if (nativeQuery) {
-
-			Parameters<?, ?> parameters = getQueryMethod().getParameters();
-
-			if (parameters.hasSortParameter() && !queryString.contains("#sort")) {
-				throw new InvalidJpaQueryMethodException(
-						"Cannot use native queries with dynamic sorting in method " + getQueryMethod());
-			}
-		}
-
-		validateJpaQuery(queryString, "Validation failed for query with method %s", getQueryMethod());
-
-		// TODO: Figure out how to handle count queries (different part of the top-level flow??
-		if (getQueryMethod().isPageQuery() && countQueryString != null) {
-			validateJpaQuery(countQueryString,
-					String.format("Count query validation failed for method %s", getQueryMethod()));
-		}
-	}
-
 	public String getQueryString() {
 		return queryString;
 	}
@@ -91,59 +61,10 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		return countQueryString;
 	}
 
-	private QueryPair renderQuery(String initialQuery, String initialCountQuery) {
-
-		if (!containsExpression(initialQuery)) {
-
-			Metadata queryMeta = new Metadata();
-			String finalQuery = ParameterBindingParser.INSTANCE
-					.parseParameterBindingsOfQueryIntoBindingsAndReturnCleanedQuery(initialQuery, this.bindings, queryMeta);
-
-			return new QueryPair(finalQuery, initialCountQuery);
-		}
-
-		StandardEvaluationContext evalContext = new StandardEvaluationContext();
-		evalContext.setVariable(ENTITY_NAME, getQueryMethod().getEntityInformation().getEntityName());
-
-		String potentiallyQuotedQueryString = potentiallyQuoteExpressionsParameter(initialQuery);
-
-		Expression expr = parser.parseExpression(potentiallyQuotedQueryString, ParserContext.TEMPLATE_EXPRESSION);
-
-		String result = expr.getValue(evalContext, String.class);
-
-		String processedQuery = result == null //
-				? potentiallyQuotedQueryString //
-				: potentiallyUnquoteParameterExpressions(result);
-
-		Metadata queryMeta = new Metadata();
-		String finalQuery = ParameterBindingParser.INSTANCE
-				.parseParameterBindingsOfQueryIntoBindingsAndReturnCleanedQuery(processedQuery, this.bindings, queryMeta);
-
-		return new QueryPair(finalQuery, initialCountQuery);
-	}
-
-	private record QueryPair(String query, String countQuery) {
-	}
-
-	private void validateJpaQuery(String query, String errorMessage, Object... arguments) {
-
-		if (getQueryMethod().isProcedureQuery()) {
-			return;
-		}
-
-		try (EntityManager validatingEm = getEntityManager().getEntityManagerFactory().createEntityManager()) {
-
-			if (nativeQuery) {
-				validatingEm.createNativeQuery(query);
-			} else {
-				validatingEm.createQuery(query);
-			}
-		} catch (RuntimeException ex) {
-
-			// Needed as there's ambiguities in how an invalid query string shall be expressed by the persistence provider
-			// https://java.net/projects/jpa-spec/lists/jsr338-experts/archive/2012-07/message/17
-			throw new IllegalArgumentException(String.format(errorMessage, arguments), ex);
-		}
+	@Override
+	protected ParameterBinder createBinder() {
+		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), declaredQuery, parser,
+				evaluationContextProvider);
 	}
 
 	@Override
@@ -180,17 +101,27 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
+	protected Query createCountQuery(JpaParametersParameterAccessor accessor) {
+
+		EntityManager em = getEntityManager();
+
+		Query query = getQueryMethod().isNativeQuery() //
+				? em.createNativeQuery(countQueryString) //
+				: em.createQuery(countQueryString, Long.class);
+
+		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
+
+		parameterBinder.get().bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
+
+		return query;
+	}
+
+	@Override
 	protected Query bind(Query query, JpaParametersParameterAccessor accessor) {
 
 		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
 
-		ParameterBinder parameterBinder1 = parameterBinder.get();
-		Query boundQuery = parameterBinder1.bindAndPrepare(query, metadata, accessor);
-
-		// TODO: This is for binding the count query.
-		// parameterBinder.bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
-
-		return boundQuery;
+		return parameterBinder.get().bindAndPrepare(query, metadata, accessor);
 	}
 
 	@Override
@@ -209,5 +140,80 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		return returnedType.isProjecting() && !getMetamodel().isJpaManaged(returnedType.getReturnedType()) //
 				? Tuple.class
 				: result;
+	}
+
+	private record QueryPair(String query, String countQuery) {
+	}
+
+	private QueryPair renderQuery(String initialQuery, String initialCountQuery) {
+
+		if (!containsExpression(initialQuery)) {
+
+			Metadata queryMeta = new Metadata();
+			String finalQuery = ParameterBindingParser.INSTANCE
+					.parseParameterBindingsOfQueryIntoBindingsAndReturnCleanedQuery(initialQuery, this.bindings, queryMeta);
+
+			return new QueryPair(finalQuery, initialCountQuery);
+		}
+
+		StandardEvaluationContext evalContext = new StandardEvaluationContext();
+		evalContext.setVariable(ENTITY_NAME, getQueryMethod().getEntityInformation().getEntityName());
+
+		String potentiallyQuotedQueryString = potentiallyQuoteExpressionsParameter(initialQuery);
+
+		Expression expr = parser.parseExpression(potentiallyQuotedQueryString, ParserContext.TEMPLATE_EXPRESSION);
+
+		String result = expr.getValue(evalContext, String.class);
+
+		String processedQuery = result == null //
+				? potentiallyQuotedQueryString //
+				: potentiallyUnquoteParameterExpressions(result);
+
+		Metadata queryMeta = new Metadata();
+		String finalQuery = ParameterBindingParser.INSTANCE
+				.parseParameterBindingsOfQueryIntoBindingsAndReturnCleanedQuery(processedQuery, this.bindings, queryMeta);
+
+		return new QueryPair(finalQuery, initialCountQuery);
+	}
+
+	private void validateQueries() {
+
+		if (nativeQuery) {
+
+			Parameters<?, ?> parameters = getQueryMethod().getParameters();
+
+			if (parameters.hasSortParameter() && !queryString.contains("#sort")) {
+				throw new InvalidJpaQueryMethodException(
+						"Cannot use native queries with dynamic sorting in method " + getQueryMethod());
+			}
+		}
+
+		validateJpaQuery(queryString, "Validation failed for query with method %s", getQueryMethod());
+
+		if (getQueryMethod().isPageQuery() && countQueryString != null) {
+			validateJpaQuery(countQueryString,
+					String.format("Count query validation failed for method %s", getQueryMethod()));
+		}
+	}
+
+	private void validateJpaQuery(String query, String errorMessage, Object... arguments) {
+
+		if (getQueryMethod().isProcedureQuery()) {
+			return;
+		}
+
+		try (EntityManager validatingEm = getEntityManager().getEntityManagerFactory().createEntityManager()) {
+
+			if (nativeQuery) {
+				validatingEm.createNativeQuery(query);
+			} else {
+				validatingEm.createQuery(query);
+			}
+		} catch (RuntimeException ex) {
+
+			// Needed as there's ambiguities in how an invalid query string shall be expressed by the persistence provider
+			// https://java.net/projects/jpa-spec/lists/jsr338-experts/archive/2012-07/message/17
+			throw new IllegalArgumentException(String.format(errorMessage, arguments), ex);
+		}
 	}
 }
