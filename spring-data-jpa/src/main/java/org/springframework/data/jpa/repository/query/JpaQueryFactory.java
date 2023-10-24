@@ -54,14 +54,18 @@ enum JpaQueryFactory {
 			throw QueryCreationException.create(method, "Scroll queries are not supported using String-based queries");
 		}
 
-		return new AnnotationBasedQueryContext(method, em, null, null, queryString, countQueryString,
-				evaluationContextProvider, PARSER, method.isNativeQuery());
+		RepositoryQuery repositoryQuery = method.isNativeQuery()
+				? new NativeJpaQuery(method, em, queryString, countQueryString, queryRewriter, evaluationContextProvider,
+						PARSER)
+				: new SimpleJpaQuery(method, em, queryString, countQueryString, queryRewriter, evaluationContextProvider,
+						PARSER);
 
-		// return method.isNativeQuery()
-		// ? new NativeJpaQuery(method, em, queryString, countQueryString, queryRewriter, evaluationContextProvider,
-		// PARSER)
-		// : new SimpleJpaQuery(method, em, queryString, countQueryString, queryRewriter, evaluationContextProvider,
-		// PARSER);
+		AnnotationBasedQueryContext annotationBasedQueryContext = new AnnotationBasedQueryContext(method, em, null,
+				queryString, countQueryString, evaluationContextProvider, PARSER, method.isNativeQuery());
+
+		boolean classic = false;
+
+		return classic ? repositoryQuery : annotationBasedQueryContext;
 	}
 
 	/**

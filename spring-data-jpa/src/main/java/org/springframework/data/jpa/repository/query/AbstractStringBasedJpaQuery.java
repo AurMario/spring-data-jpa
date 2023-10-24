@@ -108,7 +108,6 @@ abstract class AbstractStringBasedJpaQuery extends AbstractJpaQuery {
 
 	@Override
 	protected ParameterBinder createBinder() {
-
 		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), query, parser,
 				evaluationContextProvider);
 	}

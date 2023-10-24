@@ -22,6 +22,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
 	private final StoredProcedureAttributes procedureAttributes;
 	private final boolean useNamedParameters;
+
 	public StoredProcedureQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
 			PersistenceProvider provider) {
 
@@ -59,7 +60,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
 		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata("singleton", storedProcedure);
 
-		return parameterBinder.bind(storedProcedure, metadata, accessor);
+		return parameterBinder.get().bind(storedProcedure, metadata, accessor);
 	}
 
 	@Nullable

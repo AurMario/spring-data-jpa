@@ -24,6 +24,7 @@ import org.springframework.data.repository.core.support.SurroundingTransactionDe
 import org.springframework.data.repository.query.ResultProcessor;
 import org.springframework.data.repository.query.ReturnedType;
 import org.springframework.data.support.PageableExecutionUtils;
+import org.springframework.data.util.Lazy;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
@@ -52,7 +53,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 	protected final QueryParameterSetter.QueryMetadataCache metadataCache = new QueryParameterSetter.QueryMetadataCache();
 
-	protected final ParameterBinder parameterBinder;
+	protected final Lazy<ParameterBinder> parameterBinder;
 
 	public AbstractJpaQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
 			PersistenceProvider provider) {
@@ -61,7 +62,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		this.entityManager = entityManager;
 		this.metamodel = metamodel;
 		this.provider = provider;
-		this.parameterBinder = ParameterBinderFactory.createBinder(method.getParameters());
+		this.parameterBinder = Lazy.of(this::createBinder);
 
 		if (method.isStreamQuery()) {
 			this.executor = new StreamExecutor(this);
@@ -79,6 +80,10 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 			this.executor = new SingleEntityExecutor(this);
 		}
 
+	}
+
+	protected ParameterBinder createBinder() {
+		return ParameterBinderFactory.createBinder(method.getParameters());
 	}
 
 	@Override
@@ -416,13 +421,17 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 		@Override
 		protected Object doExecute(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
-			return PageableExecutionUtils.getPage(query.getResultList(), accessor.getPageable(),
+
+			List resultList = query.getResultList();
+
+			return PageableExecutionUtils.getPage(resultList, accessor.getPageable(),
 					() -> count(queryMethod, query, accessor));
 		}
 
 		private long count(JpaQueryMethod queryMethod, Query query, JpaParametersParameterAccessor accessor) {
 
 			List<?> totals = query.getResultList(); // TODO: create a count query based on current query
+
 			return totals.size() == 1 //
 					? CONVERSION_SERVICE.convert(totals.get(0), Long.class) //
 					: totals.size();

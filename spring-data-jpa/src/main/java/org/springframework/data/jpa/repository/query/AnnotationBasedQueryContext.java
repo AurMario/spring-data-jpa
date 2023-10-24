@@ -4,6 +4,7 @@ import static org.springframework.data.jpa.repository.query.ExpressionBasedStrin
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import jakarta.persistence.Tuple;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -13,6 +14,7 @@ import org.springframework.data.jpa.util.JpaMetamodel;
 import org.springframework.data.repository.query.Parameters;
 import org.springframework.data.repository.query.QueryMethodEvaluationContextProvider;
 import org.springframework.data.repository.query.ResultProcessor;
+import org.springframework.data.repository.query.ReturnedType;
 import org.springframework.expression.Expression;
 import org.springframework.expression.ParserContext;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
@@ -20,23 +22,27 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 
 class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
+	private final String originalQueryString;
+
 	private final String queryString;
+
 	private final String countQueryString;
 	private final QueryMethodEvaluationContextProvider evaluationContextProvider;
 	private final SpelExpressionParser parser;
 	private final boolean nativeQuery;
 
 	private final List<ParameterBinding> bindings;
+	private final DeclaredQuery declaredQuery;
 
-	public AnnotationBasedQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
-			PersistenceProvider provider, String queryString, String countQueryString,
-			QueryMethodEvaluationContextProvider evaluationContextProvider, SpelExpressionParser parser,
-			boolean nativeQuery) {
+	public AnnotationBasedQueryContext(JpaQueryMethod method, EntityManager entityManager, PersistenceProvider provider,
+			String queryString, String countQueryString, QueryMethodEvaluationContextProvider evaluationContextProvider,
+			SpelExpressionParser parser, boolean nativeQuery) {
 
-		super(method, entityManager, metamodel, provider);
+		super(method, entityManager, JpaMetamodel.of(entityManager.getMetamodel()), provider);
 
 		this.bindings = new ArrayList<>();
 
+		this.originalQueryString = queryString;
 		this.evaluationContextProvider = evaluationContextProvider;
 		this.parser = parser;
 		this.nativeQuery = nativeQuery;
@@ -45,7 +51,15 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		this.queryString = queryPair.query();
 		this.countQueryString = queryPair.countQuery();
 
+		this.declaredQuery = DeclaredQuery.of(originalQueryString, nativeQuery);
+
 		validateQueries();
+	}
+
+	@Override
+	protected ParameterBinder createBinder() {
+		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), declaredQuery, parser,
+				evaluationContextProvider);
 	}
 
 	private void validateQueries() {
@@ -63,10 +77,10 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		validateJpaQuery(queryString, "Validation failed for query with method %s", getQueryMethod());
 
 		// TODO: Figure out how to handle count queries (different part of the top-level flow??
-		// if (getQueryMethod().isPageQuery()) {
-		// validateJpaQuery(countQueryString,
-		// String.format("Count query validation failed for method %s", getQueryMethod()));
-		// }
+		if (getQueryMethod().isPageQuery() && countQueryString != null) {
+			validateJpaQuery(countQueryString,
+					String.format("Count query validation failed for method %s", getQueryMethod()));
+		}
 	}
 
 	public String getQueryString() {
@@ -75,11 +89,6 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
 	public String getCountQueryString() {
 		return countQueryString;
-	}
-
-	@Override
-	protected String createQuery() {
-		return queryString;
 	}
 
 	private QueryPair renderQuery(String initialQuery, String initialCountQuery) {
@@ -138,6 +147,11 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
+	protected String createQuery() {
+		return queryString;
+	}
+
+	@Override
 	protected String processQuery(String query, JpaParametersParameterAccessor accessor) {
 
 		DeclaredQuery declaredQuery = DeclaredQuery.of(query, nativeQuery);
@@ -151,7 +165,14 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
 		ResultProcessor processor = getQueryMethod().getResultProcessor().withDynamicProjection(accessor);
 
-		Class<?> typeToRead = getTypeToRead(processor.getReturnedType());
+		ReturnedType returnedType = processor.getReturnedType();
+		Class<?> typeToRead = getTypeToRead(returnedType);
+
+		if (typeToRead == null) {
+			return nativeQuery //
+					? getEntityManager().createNativeQuery(queryString) //
+					: getEntityManager().createQuery(queryString);
+		}
 
 		return nativeQuery //
 				? getEntityManager().createNativeQuery(queryString, typeToRead) //
@@ -163,8 +184,30 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
 		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
 
-		parameterBinder.bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
+		ParameterBinder parameterBinder1 = parameterBinder.get();
+		Query boundQuery = parameterBinder1.bindAndPrepare(query, metadata, accessor);
 
-		return query;
+		// TODO: This is for binding the count query.
+		// parameterBinder.bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
+
+		return boundQuery;
+	}
+
+	@Override
+	protected Class<?> getTypeToRead(ReturnedType returnedType) {
+
+		if (!nativeQuery) {
+			return super.getTypeToRead(returnedType);
+		}
+
+		Class<?> result = getQueryMethod().isQueryForEntity() ? returnedType.getDomainType() : null;
+
+		if (declaredQuery.hasConstructorExpression() || declaredQuery.isDefaultProjection()) {
+			return result;
+		}
+
+		return returnedType.isProjecting() && !getMetamodel().isJpaManaged(returnedType.getReturnedType()) //
+				? Tuple.class
+				: result;
 	}
 }
