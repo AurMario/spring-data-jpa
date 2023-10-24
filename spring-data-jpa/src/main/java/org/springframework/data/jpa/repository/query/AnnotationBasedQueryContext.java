@@ -67,18 +67,12 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected ParameterBinder createBinder() {
-		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), declaredQuery, parser,
-				evaluationContextProvider);
-	}
-
-	@Override
 	protected String createQuery() {
 		return queryString;
 	}
 
 	@Override
-	protected String processQuery(String query, JpaParametersParameterAccessor accessor) {
+	protected String postProcessQuery(String query, JpaParametersParameterAccessor accessor) {
 
 		DeclaredQuery declaredQuery = DeclaredQuery.of(query, nativeQuery);
 
@@ -87,7 +81,7 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
+	protected Query turnIntoJpaQuery(String query, JpaParametersParameterAccessor accessor) {
 
 		ResultProcessor processor = getQueryMethod().getResultProcessor().withDynamicProjection(accessor);
 
@@ -98,37 +92,13 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 
 		if (typeToRead == null) {
 			return nativeQuery //
-					? getEntityManager().createNativeQuery(query) //
-					: getEntityManager().createQuery(query);
+					? getEntityManager().createNativeQuery(potentiallyRewrittenQuery) //
+					: getEntityManager().createQuery(potentiallyRewrittenQuery);
 		}
 
 		return nativeQuery //
-				? getEntityManager().createNativeQuery(query, typeToRead) //
-				: getEntityManager().createQuery(query, typeToRead);
-	}
-
-	@Override
-	protected Query createCountQuery(JpaParametersParameterAccessor accessor) {
-
-		EntityManager em = getEntityManager();
-
-		Query query = getQueryMethod().isNativeQuery() //
-				? em.createNativeQuery(countQueryString) //
-				: em.createQuery(countQueryString, Long.class);
-
-		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
-
-		parameterBinder.get().bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
-
-		return query;
-	}
-
-	@Override
-	protected Query bind(Query query, JpaParametersParameterAccessor accessor) {
-
-		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
-
-		return parameterBinder.get().bindAndPrepare(query, metadata, accessor);
+				? getEntityManager().createNativeQuery(potentiallyRewrittenQuery, typeToRead) //
+				: getEntityManager().createQuery(potentiallyRewrittenQuery, typeToRead);
 	}
 
 	@Override
@@ -148,6 +118,38 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 				? Tuple.class
 				: result;
 	}
+
+	@Override
+	protected Query createCountQuery(JpaParametersParameterAccessor accessor) {
+
+		EntityManager em = getEntityManager();
+
+		Query query = getQueryMethod().isNativeQuery() //
+				? em.createNativeQuery(countQueryString) //
+				: em.createQuery(countQueryString, Long.class);
+
+		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
+
+		parameterBinder.get().bind(metadata.withQuery(query), accessor, QueryParameterSetter.ErrorHandling.LENIENT);
+
+		return query;
+	}
+
+	@Override
+	protected ParameterBinder createBinder() {
+		return ParameterBinderFactory.createQueryAwareBinder(getQueryMethod().getParameters(), declaredQuery, parser,
+				evaluationContextProvider);
+	}
+
+	@Override
+	protected Query bindParameters(Query query, JpaParametersParameterAccessor accessor) {
+
+		QueryParameterSetter.QueryMetadata metadata = metadataCache.getMetadata(queryString, query);
+
+		return parameterBinder.get().bindAndPrepare(query, metadata, accessor);
+	}
+
+	// Internals
 
 	private record QueryPair(String query, String countQuery) {
 	}
@@ -232,7 +234,7 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	 * @param accessor
 	 * @return
 	 */
-	protected String potentiallyRewriteQuery(String originalQuery, JpaParametersParameterAccessor accessor) {
+	private String potentiallyRewriteQuery(String originalQuery, JpaParametersParameterAccessor accessor) {
 
 		Sort sort = accessor.getSort();
 		Pageable pageable = accessor.getPageable();

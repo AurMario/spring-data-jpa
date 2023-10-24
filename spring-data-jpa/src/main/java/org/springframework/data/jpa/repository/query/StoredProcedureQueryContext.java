@@ -18,8 +18,6 @@ import org.springframework.util.StringUtils;
 
 class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
-	private static final String NO_SURROUNDING_TRANSACTION = "You're trying to execute a @Procedure method without a surrounding transaction that keeps the connection open so that the ResultSet can actually be consumed; Make sure the consumer code uses @Transactional or any other way of declaring a (read-only) transaction";
-
 	private final StoredProcedureAttributes procedureAttributes;
 	private final boolean useNamedParameters;
 
@@ -34,9 +32,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	private static boolean useNamedParameters(JpaQueryMethod method) {
 
 		return method.getParameters().stream() //
-				.filter(Parameter::isNamedParameter) //
-				.findAny() //
-				.isPresent();
+				.anyMatch(Parameter::isNamedParameter);
 	}
 
 	@Override
@@ -45,7 +41,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
+	protected Query turnIntoJpaQuery(String query, JpaParametersParameterAccessor accessor) {
 
 		return procedureAttributes.isNamedStoredProcedure() //
 				? newNamedStoredProcedureQuery(query)
@@ -53,12 +49,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected Query createCountQuery(JpaParametersParameterAccessor values) {
-		throw new UnsupportedOperationException("StoredProcedureQuery does not support count queries");
-	}
-
-	@Override
-	protected Query bind(Query query, JpaParametersParameterAccessor accessor) {
+	protected Query bindParameters(Query query, JpaParametersParameterAccessor accessor) {
 
 		Assert.isInstanceOf(StoredProcedureQuery.class, query);
 		StoredProcedureQuery storedProcedure = (StoredProcedureQuery) query;
@@ -100,7 +91,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	private Object extractOutputParameterValue(ProcedureParameter outputParameter, Integer index,
 			StoredProcedureQuery storedProcedureQuery) {
 
-		JpaParameters methodParameters = (JpaParameters) getQueryMethod().getParameters();
+		JpaParameters methodParameters = getQueryMethod().getParameters();
 
 		return useNamedParameters && StringUtils.hasText(outputParameter.getName())
 				? storedProcedureQuery.getOutputParameterValue(outputParameter.getName())

@@ -29,6 +29,11 @@ import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 import org.springframework.util.ClassUtils;
 
+/**
+ * A next generation base class representating a JPA query.
+ *
+ * @author Greg Turnquist
+ */
 abstract class AbstractJpaQueryContext implements QueryContext {
 
 	static final ConversionService CONVERSION_SERVICE;
@@ -82,10 +87,6 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 	}
 
-	protected ParameterBinder createBinder() {
-		return ParameterBinderFactory.createBinder(method.getParameters());
-	}
-
 	@Override
 	public JpaQueryMethod getQueryMethod() {
 		return this.method;
@@ -99,31 +100,32 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return entityManager;
 	}
 
+	/**
+	 * This is the fundamental flow that all JPA-based operations will take, whether it's a stored procedure, a custom
+	 * finder, an {@literal @Query}-based method, or something else.
+	 *
+	 * @param parameters must not be {@literal null}.
+	 * @return
+	 */
 	@Nullable
 	@Override
 	final public Object execute(Object[] parameters) {
 
-		// create query
 		String initialQuery = createQuery();
 
-		// post-process query
 		JpaParametersParameterAccessor accessor = obtainParameterAccessor(parameters);
-		String processedQuery = processQuery(initialQuery, accessor);
+		String processedQuery = postProcessQuery(initialQuery, accessor);
 
-		// parse query
-		Query parsedQuery = createJpaQuery(processedQuery, accessor);
+		Query jpaQuery = turnIntoJpaQuery(processedQuery, accessor);
 
-		// apply query hints
-		Query parsedQueryWithHints = applyQueryHints(parsedQuery);
+		Query jpaQueryWithHints = applyQueryHints(jpaQuery);
 
-		// apply lock mode
-		Query parsedQueryWithHintsAndLockMode = applyLockMode(parsedQueryWithHints);
+		Query jpaQueryWithHintsAndLockMode = applyLockMode(jpaQueryWithHints);
 
-		// gather parameters and bind them to the query
-		Query queryToExecute = bind(parsedQueryWithHintsAndLockMode, accessor);
+		Query queryToExecute = bindParameters(jpaQueryWithHintsAndLockMode, accessor);
 
 		// execute query
-		Object rawResults = executor.execute(this, queryToExecute, accessor);
+		Object rawResults = executor.executeQuery(queryToExecute, accessor);
 
 		// Unwrap results
 		Object unwrappedResults = unwrapAndApplyProjections(rawResults, accessor);
@@ -133,19 +135,19 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	}
 
 	/**
-	 * Every form of query must produce a string-based query.
-	 * 
+	 * Every form of a JPA-based query must produce a string-based query.
+	 *
 	 * @return
 	 */
 	protected abstract String createQuery();
 
 	/**
-	 * By default, apply no processing and simply return the query unaltered.
+	 * Taking the original query, apply any textual transformations needed to make the query runnable.
 	 *
 	 * @param query
 	 * @return modified query
 	 */
-	protected String processQuery(String query, JpaParametersParameterAccessor accessor) {
+	protected String postProcessQuery(String query, JpaParametersParameterAccessor accessor) {
 		return query;
 	}
 
@@ -155,11 +157,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	 * @param query
 	 * @return
 	 */
-	protected Query createJpaQuery(String query, JpaParametersParameterAccessor accessor) {
-		return entityManager.createQuery(query, method.getReturnType());
+	protected Query turnIntoJpaQuery(String query, JpaParametersParameterAccessor accessor) {
+		return entityManager.createQuery(query, getTypeToRead(method.getResultProcessor().getReturnedType()));
 	}
-
-	protected abstract Query createCountQuery(JpaParametersParameterAccessor values);
 
 	@Nullable
 	protected Class<?> getTypeToRead(ReturnedType returnedType) {
@@ -171,6 +171,14 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return returnedType.isProjecting() && !getMetamodel().isJpaManaged(returnedType.getReturnedType()) //
 				? Tuple.class //
 				: null;
+	}
+
+	protected Query createCountQuery(JpaParametersParameterAccessor values) {
+		throw new UnsupportedOperationException(getClass().getSimpleName() + " does not support count queries");
+	}
+
+	protected ParameterBinder createBinder() {
+		return ParameterBinderFactory.createBinder(method.getParameters());
 	}
 
 	protected Query applyQueryHints(Query query) {
@@ -209,9 +217,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return lockModeType == null ? query : query.setLockMode(lockModeType);
 	}
 
-	protected abstract Query bind(Query query, JpaParametersParameterAccessor accessor);
+	protected abstract Query bindParameters(Query query, JpaParametersParameterAccessor accessor);
 
-	protected Object unwrapAndApplyProjections(Object result, JpaParametersParameterAccessor accessor) {
+	protected Object unwrapAndApplyProjections(@Nullable Object result, JpaParametersParameterAccessor accessor) {
 
 		ResultProcessor withDynamicProjection = method.getResultProcessor().withDynamicProjection(accessor);
 
@@ -219,6 +227,8 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return withDynamicProjection.processResult(result,
 				new AbstractJpaQuery.TupleConverter(withDynamicProjection.getReturnedType()));
 	}
+
+	// Internals
 
 	/**
 	 * Transform the incoming array of arguments into a {@link JpaParametersParameterAccessor}.
@@ -260,7 +270,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Nullable
-		public Object execute(AbstractJpaQueryContext queryContext, Query query, JpaParametersParameterAccessor accessor) {
+		public Object executeQuery(Query query, JpaParametersParameterAccessor accessor) {
 
 			Assert.notNull(queryContext, "QueryContext must not be null");
 			Assert.notNull(query, "Query must not be null");
@@ -269,7 +279,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 			Object result;
 
 			try {
-				result = doExecute(queryContext, query, accessor);
+				result = doExecute(query, accessor);
 			} catch (NoResultException ex) {
 				return null;
 			}
@@ -290,8 +300,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Nullable
-		protected abstract Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor);
+		protected abstract Object doExecute(Query query, JpaParametersParameterAccessor accessor);
 	}
 
 	/**
@@ -306,8 +315,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 
 			if (!SurroundingTransactionDetectorMethodInterceptor.INSTANCE.isSurroundingTransactionActive()) {
 				throw new InvalidDataAccessApiUsageException(NO_SURROUNDING_TRANSACTION);
@@ -323,21 +331,18 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	private class ProcedureExecutor extends JpaQueryContextExecutor {
 
 		private static final String NO_SURROUNDING_TRANSACTION = "You're trying to execute a @Procedure method without a surrounding transaction that keeps the connection open so that the ResultSet can actually be consumed; Make sure the consumer code uses @Transactional or any other way of declaring a (read-only) transaction";
+		private final StoredProcedureQueryContext storedProcedureContext;
 
 		public ProcedureExecutor(AbstractJpaQueryContext context) {
 
 			super(context);
 
 			Assert.isInstanceOf(StoredProcedureQueryContext.class, context);
-		}
-
-		protected StoredProcedureQueryContext getProcedureContext() {
-			return (StoredProcedureQueryContext) queryContext;
+			this.storedProcedureContext = (StoredProcedureQueryContext) context;
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 
 			Assert.isInstanceOf(StoredProcedureQuery.class, query);
 
@@ -352,11 +357,11 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 						throw new InvalidDataAccessApiUsageException(NO_SURROUNDING_TRANSACTION);
 					}
 
-					return queryContext.getQueryMethod().isCollectionQuery() ? procedure.getResultList()
+					return storedProcedureContext.getQueryMethod().isCollectionQuery() ? procedure.getResultList()
 							: procedure.getSingleResult();
 				}
 
-				return getProcedureContext().extractOutputValue(procedure); // extract output value from the procedure
+				return storedProcedureContext.extractOutputValue(procedure); // extract output value from the procedure
 			} finally {
 				if (procedure instanceof AutoCloseable autoCloseable) {
 					try {
@@ -377,8 +382,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 			return query.getResultList();
 		}
 	}
@@ -393,8 +397,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 
 			Pageable pageable = accessor.getPageable();
 
@@ -427,12 +430,9 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
-
-			List resultList = query.getResultList();
-
-			return PageableExecutionUtils.getPage(resultList, accessor.getPageable(), () -> count(queryContext, accessor));
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
+			return PageableExecutionUtils.getPage(query.getResultList(), accessor.getPageable(),
+					() -> count(queryContext, accessor));
 		}
 
 		private long count(AbstractJpaQueryContext queryContext, JpaParametersParameterAccessor accessor) {
@@ -464,8 +464,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 
 			Class<?> returnType = method.getReturnType();
 
@@ -499,8 +498,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		}
 
 		@Override
-		protected Object doExecute(AbstractJpaQueryContext queryContext, Query query,
-				JpaParametersParameterAccessor accessor) {
+		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 			return query.getSingleResult();
 		}
 	}
