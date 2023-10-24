@@ -121,7 +121,8 @@ public final class JpaQueryLookupStrategy {
 		@Override
 		protected RepositoryQuery resolveQuery(JpaQueryMethod method, QueryRewriter queryRewriter, EntityManager em,
 				NamedQueries namedQueries) {
-			return new PartTreeJpaQuery(method, em, escape);
+			// return new PartTreeJpaQuery(method, em, escape);
+			return new CustomFinderQueryContext(method, em);
 		}
 	}
 

@@ -161,6 +161,12 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return entityManager.createQuery(query, getTypeToRead(method.getResultProcessor().getReturnedType()));
 	}
 
+	/**
+	 * Extract the property return type for this {@link JpaQueryMethod}.
+	 * 
+	 * @param returnedType
+	 * @return {@link Class} representation
+	 */
 	@Nullable
 	protected Class<?> getTypeToRead(ReturnedType returnedType) {
 
@@ -173,14 +179,31 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 				: null;
 	}
 
+	/**
+	 * For a {@link Pageable}-based query, generate the corresponding count {@link Query}.
+	 * 
+	 * @param values
+	 * @return
+	 */
 	protected Query createCountQuery(JpaParametersParameterAccessor values) {
 		throw new UnsupportedOperationException(getClass().getSimpleName() + " does not support count queries");
 	}
 
+	/**
+	 * Create the {@link ParameterBinder} needed to associate arguments with the query.
+	 * 
+	 * @return
+	 */
 	protected ParameterBinder createBinder() {
 		return ParameterBinderFactory.createBinder(method.getParameters());
 	}
 
+	/**
+	 * Apply any {@link QueryHint}s to the {@link Query}.
+	 * 
+	 * @param query
+	 * @return
+	 */
 	protected Query applyQueryHints(Query query) {
 
 		List<QueryHint> hints = method.getHints();
@@ -203,6 +226,12 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		return query;
 	}
 
+	/**
+	 * Apply a {@link QueryHint} to the {@link Query}.
+	 * 
+	 * @param query
+	 * @param hint
+	 */
 	protected void applyQueryHint(Query query, QueryHint hint) {
 
 		Assert.notNull(query, "Query must not be null");
@@ -211,14 +240,34 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		query.setHint(hint.name(), hint.value());
 	}
 
+	/**
+	 * Apply the {@link LockModeType} to the {@link Query}.
+	 * 
+	 * @param query
+	 * @return
+	 */
 	protected Query applyLockMode(Query query) {
 
 		LockModeType lockModeType = method.getLockModeType();
 		return lockModeType == null ? query : query.setLockMode(lockModeType);
 	}
 
+	/**
+	 * Bind the query arguments to the {@link Query}.
+	 * 
+	 * @param query
+	 * @param accessor
+	 * @return
+	 */
 	protected abstract Query bindParameters(Query query, JpaParametersParameterAccessor accessor);
 
+	/**
+	 * Unwrap the results and apply any projections.
+	 * 
+	 * @param result
+	 * @param accessor
+	 * @return
+	 */
 	protected Object unwrapAndApplyProjections(@Nullable Object result, JpaParametersParameterAccessor accessor) {
 
 		ResultProcessor withDynamicProjection = method.getResultProcessor().withDynamicProjection(accessor);
@@ -269,6 +318,13 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 			this.queryContext = queryContext;
 		}
 
+		/**
+		 * Core function that defines the flow of executing a {@link Query}.
+		 * 
+		 * @param query
+		 * @param accessor
+		 * @return
+		 */
 		@Nullable
 		public Object executeQuery(Query query, JpaParametersParameterAccessor accessor) {
 
@@ -299,6 +355,13 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 					: result;
 		}
 
+		/**
+		 * Execute the query itself.
+		 * 
+		 * @param query
+		 * @param accessor
+		 * @return
+		 */
 		@Nullable
 		protected abstract Object doExecute(Query query, JpaParametersParameterAccessor accessor);
 	}
@@ -345,7 +408,6 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 		protected Object doExecute(Query query, JpaParametersParameterAccessor accessor) {
 
 			Assert.isInstanceOf(StoredProcedureQuery.class, query);
-
 			StoredProcedureQuery procedure = (StoredProcedureQuery) query;
 
 			try {

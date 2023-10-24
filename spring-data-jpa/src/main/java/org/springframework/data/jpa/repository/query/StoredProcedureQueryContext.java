@@ -26,12 +26,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 
 		super(method, entityManager, metamodel, provider);
 		this.procedureAttributes = method.getProcedureAttributes();
-		this.useNamedParameters = useNamedParameters(method);
-	}
-
-	private static boolean useNamedParameters(JpaQueryMethod method) {
-
-		return method.getParameters().stream() //
+		this.useNamedParameters = method.getParameters().stream() //
 				.anyMatch(Parameter::isNamedParameter);
 	}
 
