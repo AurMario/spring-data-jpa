@@ -61,7 +61,7 @@ enum JpaQueryFactory {
 						PARSER);
 
 		AnnotationBasedQueryContext annotationBasedQueryContext = new AnnotationBasedQueryContext(method, em, null,
-				queryString, countQueryString, evaluationContextProvider, PARSER, method.isNativeQuery());
+				queryString, countQueryString, evaluationContextProvider, PARSER, method.isNativeQuery(), queryRewriter);
 
 		boolean classic = false;
 

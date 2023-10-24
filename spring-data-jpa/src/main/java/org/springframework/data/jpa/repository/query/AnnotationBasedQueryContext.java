@@ -9,7 +9,10 @@ import jakarta.persistence.Tuple;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.provider.PersistenceProvider;
+import org.springframework.data.jpa.repository.QueryRewriter;
 import org.springframework.data.jpa.util.JpaMetamodel;
 import org.springframework.data.repository.query.Parameters;
 import org.springframework.data.repository.query.QueryMethodEvaluationContextProvider;
@@ -30,10 +33,11 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	private final boolean nativeQuery;
 	private final List<ParameterBinding> bindings;
 	private final DeclaredQuery declaredQuery;
+	private final QueryRewriter queryRewriter;
 
 	public AnnotationBasedQueryContext(JpaQueryMethod method, EntityManager entityManager, PersistenceProvider provider,
 			String queryString, String countQueryString, QueryMethodEvaluationContextProvider evaluationContextProvider,
-			SpelExpressionParser parser, boolean nativeQuery) {
+			SpelExpressionParser parser, boolean nativeQuery, QueryRewriter queryRewriter) {
 
 		super(method, entityManager, JpaMetamodel.of(entityManager.getMetamodel()), provider);
 
@@ -49,6 +53,7 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		this.countQueryString = queryPair.countQuery();
 
 		this.declaredQuery = DeclaredQuery.of(originalQueryString, nativeQuery);
+		this.queryRewriter = queryRewriter;
 
 		validateQueries();
 	}
@@ -89,15 +94,17 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 		ReturnedType returnedType = processor.getReturnedType();
 		Class<?> typeToRead = getTypeToRead(returnedType);
 
+		String potentiallyRewrittenQuery = potentiallyRewriteQuery(query, accessor);
+
 		if (typeToRead == null) {
 			return nativeQuery //
-					? getEntityManager().createNativeQuery(queryString) //
-					: getEntityManager().createQuery(queryString);
+					? getEntityManager().createNativeQuery(query) //
+					: getEntityManager().createQuery(query);
 		}
 
 		return nativeQuery //
-				? getEntityManager().createNativeQuery(queryString, typeToRead) //
-				: getEntityManager().createQuery(queryString, typeToRead);
+				? getEntityManager().createNativeQuery(query, typeToRead) //
+				: getEntityManager().createQuery(query, typeToRead);
 	}
 
 	@Override
@@ -216,4 +223,23 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 			throw new IllegalArgumentException(String.format(errorMessage, arguments), ex);
 		}
 	}
+
+	/**
+	 * Use the {@link QueryRewriter}, potentially rewrite the query, using relevant {@link Sort} and {@link Pageable}
+	 * information.
+	 *
+	 * @param originalQuery
+	 * @param accessor
+	 * @return
+	 */
+	protected String potentiallyRewriteQuery(String originalQuery, JpaParametersParameterAccessor accessor) {
+
+		Sort sort = accessor.getSort();
+		Pageable pageable = accessor.getPageable();
+
+		return pageable != null && pageable.isPaged() //
+				? queryRewriter.rewrite(originalQuery, pageable) //
+				: queryRewriter.rewrite(originalQuery, sort);
+	}
+
 }
