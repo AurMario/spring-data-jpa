@@ -7,13 +7,11 @@ import jakarta.persistence.PersistenceUnitUtil;
 import jakarta.persistence.Query;
 
 import java.util.Iterator;
-import java.util.Optional;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.support.JpaMetamodelEntityInformation;
 import org.springframework.data.mapping.PropertyPath;
 import org.springframework.data.repository.query.Parameter;
-import org.springframework.data.repository.query.ParameterAccessor;
 import org.springframework.data.repository.query.ReturnedType;
 import org.springframework.data.repository.query.parser.AbstractQueryCreator;
 import org.springframework.data.repository.query.parser.Part;
@@ -27,8 +25,7 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	private final JpaParameters parameters;
 	private final PartTree tree;
 	private final JpaMetamodelEntityInformation<?, Object> entityInformation;
-	private final QueryCreator queryCreator;
-	private final CountQueryCreator countQueryCreator;
+	private final boolean recreationRequired;
 
 	public CustomFinderQueryContext(JpaQueryMethod method, EntityManager entityManager) {
 
@@ -41,7 +38,7 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 		this.entityInformation = new JpaMetamodelEntityInformation<>(domainClass, entityManager.getMetamodel(),
 				persistenceUnitUtil);
 
-		boolean recreationRequired = parameters.hasDynamicProjection() || parameters.potentiallySortsDynamically()
+		this.recreationRequired = parameters.hasDynamicProjection() || parameters.potentiallySortsDynamically()
 				|| method.isScrollQuery();
 
 		try {
@@ -49,11 +46,6 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 			this.tree = new PartTree(method.getName(), domainClass);
 
 			validate(tree, parameters, method.getName());
-
-			ReturnedType returnedType = method.getResultProcessor().getReturnedType();
-
-			this.queryCreator = new QueryCreator(recreationRequired, returnedType);
-			this.countQueryCreator = new CountQueryCreator(recreationRequired, returnedType);
 
 		} catch (Exception ex) {
 			throw new IllegalArgumentException(
@@ -63,13 +55,30 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 
 	@Override
 	protected String createQuery(JpaParametersParameterAccessor accessor) {
-		return queryCreator.createQuery(accessor);
+
+		QueryCreator queryCreator = new QueryCreator(recreationRequired, accessor);
+
+		Sort dynamicSort = getDynamicSort(accessor);
+		String query = queryCreator.createQuery(dynamicSort);
+
+		System.out.println(query);
+
+		return query;
+	}
+
+	Sort getDynamicSort(JpaParametersParameterAccessor accessor) {
+
+		return accessor.getParameters().potentiallySortsDynamically() //
+				? accessor.getSort() //
+				: Sort.unsorted();
 	}
 
 	@Override
 	protected Query createCountQuery(JpaParametersParameterAccessor accessor) {
 
-		String countQuery = countQueryCreator.createQuery(accessor);
+		CountQueryCreator queryCreator = new CountQueryCreator(recreationRequired, accessor);
+
+		String countQuery = queryCreator.createQuery();
 
 		return getEntityManager().createQuery(countQuery, Long.class);
 	}
@@ -89,7 +98,8 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 			throw new IllegalStateException("ParameterBinder is null");
 		}
 
-		return binder.bindAndPrepare(query, metadata, accessor);
+		Query boundQuery = binder.bindAndPrepare(query, metadata, accessor);
+		return boundQuery;
 	}
 
 	private void validate(PartTree tree, JpaParameters parameters, String methodName) {
@@ -157,52 +167,26 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	private class QueryCreator extends AbstractQueryCreator<String, String> {
 
 		private final boolean recreationRequired;
-		private final Optional<ParameterAccessor> parameters;
+		private Iterable<? extends Parameter> parameterProvider;
 		protected final ReturnedType returnedType;
 
-		public QueryCreator(boolean recreationRequired, ReturnedType returnedType) {
-			this(recreationRequired, Optional.empty(), returnedType);
-		}
+		public QueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor) {
 
-		public QueryCreator(boolean recreationRequired, ParameterAccessor accessor, ReturnedType returnedType) {
-			this(recreationRequired, Optional.of(accessor), returnedType);
-		}
-
-		public QueryCreator(boolean recreationRequired, Optional<ParameterAccessor> parameters, ReturnedType returnedType) {
-
-			super(tree);
-
-			Assert.notNull(parameters, "ParameterAccessor must not be null");
+			super(tree, accessor);
 
 			this.recreationRequired = recreationRequired;
-			this.parameters = parameters;
-			this.returnedType = returnedType;
-		}
-
-		public String createQuery(JpaParametersParameterAccessor accessor) {
-
-			Sort dynamicSort = getDynamicSort(accessor);
-			String query = createQuery(dynamicSort);
-			System.out.println(query);
-
-			return query;
-		}
-
-		Sort getDynamicSort(JpaParametersParameterAccessor accessor) {
-
-			return accessor.getParameters().potentiallySortsDynamically() //
-					? accessor.getSort() //
-					: Sort.unsorted();
+			this.parameterProvider = accessor.getParameters();
+			this.returnedType = getQueryMethod().getResultProcessor().withDynamicProjection(accessor).getReturnedType();
 		}
 
 		@Override
-		protected String create(Part part, Iterator<Object> parameterProvider) {
-			return toPredicate(part, parameterProvider);
+		protected String create(Part part, Iterator<Object> iterator) {
+			return toPredicate(part);
 		}
 
 		@Override
-		protected String and(Part part, String base, Iterator<Object> parameterProvider) {
-			return base + " and " + toPredicate(part, parameterProvider);
+		protected String and(Part part, String base, Iterator<Object> iterator) {
+			return base + " and " + toPredicate(part);
 		}
 
 		@Override
@@ -229,24 +213,15 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 			return query;
 		}
 
-		private String toPredicate(Part part, Iterator<Object> parameterProvider) {
-			return new PredicateBuilder(part, null).build();
+		private String toPredicate(Part part) {
+			return new PredicateBuilder(part, parameterProvider).build();
 		}
 	}
 
 	private class CountQueryCreator extends QueryCreator {
 
-		public CountQueryCreator(boolean recreationRequired, ReturnedType returnedType) {
-			super(recreationRequired, returnedType);
-		}
-
-		public CountQueryCreator(boolean recreationRequired, ParameterAccessor accessor, ReturnedType returnedType) {
-			super(recreationRequired, accessor, returnedType);
-		}
-
-		public CountQueryCreator(boolean recreationRequired, Optional<ParameterAccessor> parameters,
-				ReturnedType returnedType) {
-			super(recreationRequired, parameters, returnedType);
+		public CountQueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor) {
+			super(recreationRequired, accessor);
 		}
 
 		@Override
@@ -264,131 +239,17 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 		}
 	}
 
-	// private class QueryCreator {
-	//
-	// private final boolean recreationRequired;
-	// private final Optional<ParameterAccessor> parameters;
-	// private final ReturnedType returnedType;
-	//
-	// public QueryCreator(boolean recreationRequired, ReturnedType returnedType) {
-	// this(recreationRequired, Optional.empty(), returnedType);
-	// }
-	//
-	// public QueryCreator(boolean recreationRequired, ParameterAccessor parameters, ReturnedType returnedType) {
-	// this(recreationRequired, Optional.of(parameters), returnedType);
-	// }
-	//
-	// private QueryCreator(boolean recreationRequired, Optional<ParameterAccessor> parameters,
-	// ReturnedType returnedType) {
-	//
-	// Assert.notNull(parameters, "ParameterAccessor must not be null");
-	//
-	// this.recreationRequired = recreationRequired;
-	// this.parameters = parameters;
-	// this.returnedType = returnedType;
-	// }
-	//
-	// public String createQuery(JpaParametersParameterAccessor accessor) {
-	//
-	// return createQuery(accessor, parameters //
-	// .map(ParameterAccessor::getSort) //
-	// .orElse(Sort.unsorted()));
-	// }
-	//
-	// public String createQuery(JpaParametersParameterAccessor accessor, Sort dynamicSort) {
-	//
-	// Assert.notNull(dynamicSort, "DynamicSort must not be null");
-	//
-	// Sort sort = tree.getSort().and(dynamicSort);
-	//
-	// String simpleName = returnedType.getReturnedType().getSimpleName();
-	// String simpleAlias = simpleName.substring(0, 1).toLowerCase();
-	//
-	// String query = String.format("select %s from %s %s", simpleAlias, simpleName, simpleAlias);
-	//
-	// String criteria = createCriteria(accessor, tree);
-	// if (criteria != null) {
-	// query += " where " + criteria;
-	// }
-	//
-	// if (sort != null && sort.isSorted()) {
-	// query += " order by " + String.join(",", QueryUtils.toOrders(sort, returnedType.getDomainType()));
-	// }
-	//
-	// return query;
-	// }
-	//
-	// public Query createCountQuery(JpaParametersParameterAccessor accessor) {
-	//
-	// String simpleName = returnedType.getReturnedType().getSimpleName();
-	// String simpleAlias = simpleName.substring(0, 1).toLowerCase();
-	//
-	// String query = String.format("select count(%s) from %s %s", simpleAlias, simpleName, simpleAlias);
-	//
-	// String criteria = createCriteria(accessor, tree);
-	// if (criteria != null) {
-	// query += " where " + criteria;
-	// }
-	//
-	// return getEntityManager().createQuery(query, Long.class);
-	// }
-	//
-	// @Nullable
-	// private String createCriteria(JpaParametersParameterAccessor accessor, PartTree tree) {
-	//
-	// String base = null;
-	//
-	// Iterator<? extends Parameter> parameterProvider = accessor.getParameters().iterator();
-	//
-	// for (PartTree.OrPart node : tree) {
-	//
-	// Iterator<Part> parts = node.iterator();
-	//
-	// if (!parts.hasNext()) {
-	// throw new IllegalStateException(String.format("No part found in PartTree %s", tree));
-	// }
-	//
-	// String criteria = createCriteria(parts.next(), parameterProvider);
-	//
-	// while (parts.hasNext()) {
-	// criteria = and(parts.next(), criteria, parameterProvider);
-	// }
-	//
-	// base = base == null ? criteria : or(base, criteria);
-	// }
-	//
-	// return base;
-	// }
-	//
-	// private String createCriteria(Part part, Iterator<? extends Parameter> parameterProvider) {
-	// return toPredicate(part, parameterProvider);
-	// }
-	//
-	// private String and(Part part, String base, Iterator<? extends Parameter> parameterProvider) {
-	// return base + " and " + toPredicate(part, parameterProvider);
-	// }
-	//
-	// private String or(String part, String base) {
-	// return base + " or " + part;
-	// }
-	//
-	// private String toPredicate(Part part, Iterator<? extends Parameter> parameterProvider) {
-	// return new PredicateBuilder(part, parameterProvider).build();
-	// }
-	//
-	// }
-
 	private class PredicateBuilder {
 		private final Part part;
-		private final Iterator<Object> parameters;
+		private final Iterator<? extends Parameter> parameters;
 
-		public PredicateBuilder(Part part, Iterator<Object> parameters) {
+		public PredicateBuilder(Part part, Iterable<? extends Parameter> parameters) {
 
 			Assert.notNull(part, "Part must not be null");
 			Assert.notNull(parameters, "Parameters must not be null");
 
 			this.part = part;
-			this.parameters = parameters;
+			this.parameters = parameters.iterator();
 		}
 
 		public String build() {
@@ -401,8 +262,8 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 
 			switch (type) {
 				case BETWEEN:
-					Parameter first = (Parameter) parameters.next();
-					Parameter second = (Parameter) parameters.next();
+					Parameter first = parameters.next();
+					Parameter second = parameters.next();
 					return getComparablePath(part) + " between " + first.toString() + " and " + second.toString();
 				case AFTER:
 				case GREATER_THAN:
@@ -514,7 +375,7 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 		}
 
 		private String nextParameter() {
-			return ":" + ((Parameter) parameters.next()).getName().get();
+			return ":" + parameters.next().getName().get();
 		}
 
 		private String getComparablePath(Part part) {
