@@ -67,7 +67,7 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected String createQuery() {
+	protected String createQuery(JpaParametersParameterAccessor accessor) {
 		return queryString;
 	}
 

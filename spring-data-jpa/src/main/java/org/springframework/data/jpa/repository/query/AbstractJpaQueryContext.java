@@ -111,9 +111,10 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	@Override
 	final public Object execute(Object[] parameters) {
 
-		String initialQuery = createQuery();
-
 		JpaParametersParameterAccessor accessor = obtainParameterAccessor(parameters);
+
+		String initialQuery = createQuery(accessor);
+
 		String processedQuery = postProcessQuery(initialQuery, accessor);
 
 		Query jpaQuery = turnIntoJpaQuery(processedQuery, accessor);
@@ -139,7 +140,7 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 	 *
 	 * @return
 	 */
-	protected abstract String createQuery();
+	protected abstract String createQuery(JpaParametersParameterAccessor accessor);
 
 	/**
 	 * Taking the original query, apply any textual transformations needed to make the query runnable.

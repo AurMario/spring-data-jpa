@@ -31,7 +31,7 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	}
 
 	@Override
-	protected String createQuery() {
+	protected String createQuery(JpaParametersParameterAccessor accessor) {
 		return procedureAttributes.getProcedureName();
 	}
 
