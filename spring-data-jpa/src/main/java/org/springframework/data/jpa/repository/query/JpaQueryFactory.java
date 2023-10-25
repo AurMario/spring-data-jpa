@@ -54,8 +54,8 @@ enum JpaQueryFactory {
 			throw QueryCreationException.create(method, "Scroll queries are not supported using String-based queries");
 		}
 
-		return new AnnotationBasedQueryContext(method, em, null, queryString, countQueryString, evaluationContextProvider,
-				PARSER, method.isNativeQuery(), queryRewriter);
+		return new AnnotationBasedQueryContext(method, em, queryString, countQueryString, evaluationContextProvider, PARSER,
+				method.isNativeQuery(), queryRewriter);
 	}
 
 	/**
@@ -71,7 +71,7 @@ enum JpaQueryFactory {
 			throw QueryCreationException.create(method, "Scroll queries are not supported using stored procedures");
 		}
 
-		return new StoredProcedureQueryContext(method, em, null, null);
+		return new StoredProcedureQueryContext(method, em);
 		// return new StoredProcedureJpaQuery(method, em);
 	}
 }

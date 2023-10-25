@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.data.jpa.provider.PersistenceProvider;
-import org.springframework.data.jpa.util.JpaMetamodel;
 import org.springframework.data.repository.query.Parameter;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
@@ -21,10 +20,9 @@ class StoredProcedureQueryContext extends AbstractJpaQueryContext {
 	private final StoredProcedureAttributes procedureAttributes;
 	private final boolean useNamedParameters;
 
-	public StoredProcedureQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
-			PersistenceProvider provider) {
+	public StoredProcedureQueryContext(JpaQueryMethod method, EntityManager entityManager) {
 
-		super(method, entityManager, metamodel, provider);
+		super(method, entityManager);
 		this.procedureAttributes = method.getProcedureAttributes();
 		this.useNamedParameters = method.getParameters().stream() //
 				.anyMatch(Parameter::isNamedParameter);

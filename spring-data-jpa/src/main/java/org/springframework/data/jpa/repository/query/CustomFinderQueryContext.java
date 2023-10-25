@@ -8,6 +8,8 @@ import jakarta.persistence.Query;
 
 import java.util.Iterator;
 
+import org.springframework.data.domain.OffsetScrollPosition;
+import org.springframework.data.domain.ScrollPosition;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.support.JpaMetamodelEntityInformation;
 import org.springframework.data.mapping.PropertyPath;
@@ -29,7 +31,7 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 
 	public CustomFinderQueryContext(JpaQueryMethod method, EntityManager entityManager) {
 
-		super(method, entityManager, null, null);
+		super(method, entityManager);
 
 		this.parameters = method.getParameters();
 
@@ -56,7 +58,8 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	@Override
 	protected String createQuery(JpaParametersParameterAccessor accessor) {
 
-		QueryCreator queryCreator = new QueryCreator(recreationRequired, accessor);
+		QueryCreator queryCreator = new QueryCreator(recreationRequired, accessor,
+				accessor.getParameters().getBindableParameters().iterator());
 
 		Sort dynamicSort = getDynamicSort(accessor);
 		String query = queryCreator.createQuery(dynamicSort);
@@ -76,7 +79,8 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	@Override
 	protected Query createCountQuery(JpaParametersParameterAccessor accessor) {
 
-		CountQueryCreator queryCreator = new CountQueryCreator(recreationRequired, accessor);
+		CountQueryCreator queryCreator = new CountQueryCreator(recreationRequired, accessor,
+				accessor.getParameters().getBindableParameters().iterator());
 
 		String countQuery = queryCreator.createQuery();
 
@@ -99,6 +103,34 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 		}
 
 		Query boundQuery = binder.bindAndPrepare(query, metadata, accessor);
+
+		ScrollPosition scrollPosition = accessor.getParameters().hasScrollPositionParameter()//
+				? accessor.getScrollPosition() //
+				: null;
+
+		if (scrollPosition instanceof OffsetScrollPosition offset) {
+			query.setFirstResult(Math.toIntExact(offset.getOffset()));
+		}
+
+		if (tree.isLimiting()) {
+			if (query.getMaxResults() != Integer.MAX_VALUE) {
+				/*
+				 * In order to return the correct results, we have to adjust the first result offset to be returned if:
+				 * - a Pageable parameter is present
+				 * - AND the requested page number > 0
+				 * - AND the requested page size was bigger than the derived result limitation via the First/Top keyword.
+				 */
+				if (query.getMaxResults() > tree.getMaxResults() && query.getFirstResult() > 0) {
+					query.setFirstResult(query.getFirstResult() - (query.getMaxResults() - tree.getMaxResults()));
+				}
+
+			}
+		}
+
+		if (tree.isExistsProjection()) {
+			query.setMaxResults(1);
+		}
+
 		return boundQuery;
 	}
 
@@ -167,15 +199,16 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	private class QueryCreator extends AbstractQueryCreator<String, String> {
 
 		private final boolean recreationRequired;
-		private Iterable<? extends Parameter> parameterProvider;
+		private Iterator<? extends Parameter> parameterProvider;
 		protected final ReturnedType returnedType;
 
-		public QueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor) {
+		public QueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor,
+				Iterator<? extends Parameter> parameterProvider) {
 
 			super(tree, accessor);
 
 			this.recreationRequired = recreationRequired;
-			this.parameterProvider = accessor.getParameters();
+			this.parameterProvider = parameterProvider;
 			this.returnedType = getQueryMethod().getResultProcessor().withDynamicProjection(accessor).getReturnedType();
 		}
 
@@ -219,9 +252,9 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 	}
 
 	private class CountQueryCreator extends QueryCreator {
-
-		public CountQueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor) {
-			super(recreationRequired, accessor);
+		public CountQueryCreator(boolean recreationRequired, JpaParametersParameterAccessor accessor,
+				Iterator<? extends Parameter> parameterProvider) {
+			super(recreationRequired, accessor, parameterProvider);
 		}
 
 		@Override
@@ -243,13 +276,13 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 		private final Part part;
 		private final Iterator<? extends Parameter> parameters;
 
-		public PredicateBuilder(Part part, Iterable<? extends Parameter> parameters) {
+		public PredicateBuilder(Part part, Iterator<? extends Parameter> parameters) {
 
 			Assert.notNull(part, "Part must not be null");
 			Assert.notNull(parameters, "Parameters must not be null");
 
 			this.part = part;
-			this.parameters = parameters.iterator();
+			this.parameters = parameters;
 		}
 
 		public String build() {
@@ -313,7 +346,10 @@ class CustomFinderQueryContext extends AbstractJpaQueryContext {
 				case FALSE:
 					return getTypedPath(simpleAlias, part) + " IS FALSE";
 				case SIMPLE_PROPERTY:
-					return upperIfIgnoreCase(getTypedPath(simpleAlias, part)) + " = " + upperIfIgnoreCase(nextParameter());
+					String left = upperIfIgnoreCase(getTypedPath(simpleAlias, part));
+					String next = nextParameter();
+					String right = upperIfIgnoreCase(next);
+					return left + " = " + right;
 				case NEGATING_SIMPLE_PROPERTY:
 					return upperIfIgnoreCase(getTypedPath(simpleAlias, part)) + " <> " + upperIfIgnoreCase(nextParameter());
 				case IS_EMPTY:

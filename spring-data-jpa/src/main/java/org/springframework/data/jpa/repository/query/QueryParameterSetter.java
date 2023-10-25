@@ -26,6 +26,7 @@ import java.lang.reflect.Proxy;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -323,6 +324,11 @@ interface QueryParameterSetter {
 		}
 
 		public Query setParameter(String name, Object value) {
+
+			if (value.getClass().isArray()) {
+				return unwrapped.setParameter(name, List.of((Object[]) value));
+			}
+
 			return unwrapped.setParameter(name, value);
 		}
 

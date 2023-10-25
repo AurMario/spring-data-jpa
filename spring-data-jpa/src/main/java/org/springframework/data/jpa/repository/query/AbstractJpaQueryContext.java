@@ -60,13 +60,12 @@ abstract class AbstractJpaQueryContext implements QueryContext {
 
 	protected final Lazy<ParameterBinder> parameterBinder;
 
-	public AbstractJpaQueryContext(JpaQueryMethod method, EntityManager entityManager, JpaMetamodel metamodel,
-			PersistenceProvider provider) {
+	public AbstractJpaQueryContext(JpaQueryMethod method, EntityManager entityManager) {
 
 		this.method = method;
 		this.entityManager = entityManager;
-		this.metamodel = metamodel;
-		this.provider = provider;
+		this.metamodel = JpaMetamodel.of(entityManager.getMetamodel());
+		this.provider = PersistenceProvider.fromEntityManager(entityManager);
 		this.parameterBinder = Lazy.of(this::createBinder);
 
 		if (method.isStreamQuery()) {

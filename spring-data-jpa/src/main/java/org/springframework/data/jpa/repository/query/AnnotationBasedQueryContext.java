@@ -11,9 +11,7 @@ import java.util.List;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.provider.PersistenceProvider;
 import org.springframework.data.jpa.repository.QueryRewriter;
-import org.springframework.data.jpa.util.JpaMetamodel;
 import org.springframework.data.repository.query.Parameters;
 import org.springframework.data.repository.query.QueryMethodEvaluationContextProvider;
 import org.springframework.data.repository.query.ResultProcessor;
@@ -35,11 +33,11 @@ class AnnotationBasedQueryContext extends AbstractJpaQueryContext {
 	private final DeclaredQuery declaredQuery;
 	private final QueryRewriter queryRewriter;
 
-	public AnnotationBasedQueryContext(JpaQueryMethod method, EntityManager entityManager, PersistenceProvider provider,
-			String queryString, String countQueryString, QueryMethodEvaluationContextProvider evaluationContextProvider,
+	public AnnotationBasedQueryContext(JpaQueryMethod method, EntityManager entityManager, String queryString,
+			String countQueryString, QueryMethodEvaluationContextProvider evaluationContextProvider,
 			SpelExpressionParser parser, boolean nativeQuery, QueryRewriter queryRewriter) {
 
-		super(method, entityManager, JpaMetamodel.of(entityManager.getMetamodel()), provider);
+		super(method, entityManager);
 
 		this.bindings = new ArrayList<>();
 
